@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Framework Visualization</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        select {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        #chart-container {
+            width: 80%;
+            height: 600px;
+            margin: auto;
+        }
+        svg {
+            display: block;
+            margin: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>OSINT Framework Visualizer</h1>
+    <label for="graphType">Select Graph Type:</label>
+    <select id="graphType" onchange="updateGraph()">
+        <option value="tree">Tree View</option>
+        <option value="sunburst">Sunburst Chart</option>
+        <option value="force">Force-Directed Graph</option>
+        <option value="barchart">Bar Chart</option>
+    </select>
+
+    <div id="chart-container">
+        <canvas id="barchartCanvas" style="display: none;"></canvas>
+        <svg id="d3-chart" width="1000" height="600"></svg>
+    </div>
+
+    <script>
+        let jsonData;
+        let svg = d3.select("#d3-chart");
+
+        // Load JSON Data
+        d3.json("arf.json").then(data => {
+            jsonData = data;
+            updateGraph(); // Render initial graph
+        });
+
+        function updateGraph() {
+            let selectedGraph = document.getElementById("graphType").value;
+            svg.selectAll("*").remove();
+            document.getElementById("barchartCanvas").style.display = "none";
+
+            if (selectedGraph === "tree") {
+                renderTree(jsonData);
+            } else if (selectedGraph === "sunburst") {
+                renderSunburst(jsonData);
+            } else if (selectedGraph === "force") {
+                renderForceGraph(jsonData);
+            } else if (selectedGraph === "barchart") {
+                renderBarChart(jsonData);
+            }
+        }
+
+        // TREE VIEW
+        function renderTree(data) {
+            let tree = d3.tree().size([500, 700]);
+            let hierarchyData = d3.hierarchy(data);
+            tree(hierarchyData);
+
+            let links = svg.selectAll("line")
+                .data(hierarchyData.links())
+                .enter().append("line")
+                .attr("x1", d => d.source.y)
+                .attr("y1", d => d.source.x)
+                .attr("x2", d => d.target.y)
+                .attr("y2", d => d.target.x)
+                .attr("stroke", "black");
+
+            let nodes = svg.selectAll("circle")
+                .data(hierarchyData.descendants())
+                .enter().append("circle")
+                .attr("cx", d => d.y)
+                .attr("cy", d => d.x)
+                .attr("r", 6)
+                .attr("fill", d => d.children ? "lightblue" : "steelblue");
+
+            let labels = svg.selectAll("text")
+                .data(hierarchyData.descendants())
+                .enter().append("text")
+                .attr("x", d => d.y + 10)
+                .attr("y", d => d.x + 5)
+                .text(d => d.data.name)
+                .style("font-size", "12px");
+        }
+
+        // SUNBURST CHART
+        function renderSunburst(data) {
+            let radius = 300;
+            let partition = d3.partition().size([2 * Math.PI, radius]);
+            let root = d3.hierarchy(data).sum(d => d.children ? 0 : 1);
+            partition(root);
+
+            let arc = d3.arc()
+                .startAngle(d => d.x0)
+                .endAngle(d => d.x1)
+                .innerRadius(d => d.y0)
+                .outerRadius(d => d.y1);
+
+            svg.selectAll("path")
+                .data(root.descendants())
+                .enter().append("path")
+                .attr("d", arc)
+                .attr("fill", d => d.children ? "#69b3a2" : "#ffcc00")
+                .attr("stroke", "#fff")
+                .on("click", d => alert(d.data.name));
+        }
+
+        // FORCE-DIRECTED GRAPH
+        function renderForceGraph(data) {
+            let nodes = [];
+            let links = [];
+
+            function traverse(node) {
+                nodes.push({ id: node.name });
+                if (node.children) {
+                    node.children.forEach(child => {
+                        links.push({ source: node.name, target: child.name });
+                        traverse(child);
+                    });
+                }
+            }
+            traverse(data);
+
+            let simulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links).id(d => d.id))
+                .force("charge", d3.forceManyBody())
+                .force("center", d3.forceCenter(500, 300));
+
+            let link = svg.selectAll("line")
+                .data(links)
+                .enter().append("line")
+                .attr("stroke", "black");
+
+            let node = svg.selectAll("circle")
+                .data(nodes)
+                .enter().append("circle")
+                .attr("r", 8)
+                .attr("fill", "steelblue")
+                .call(d3.drag()
+                    .on("start", dragStart)
+                    .on("drag", dragged)
+                    .on("end", dragEnd));
+
+            let label = svg.selectAll("text")
+                .data(nodes)
+                .enter().append("text")
+                .attr("font-size", "10px")
+                .text(d => d.id);
+
+            simulation.on("tick", () => {
+                link.attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+                node.attr("cx", d => d.x).attr("cy", d => d.y);
+                label.attr("x", d => d.x + 10).attr("y", d => d.y);
+            });
+
+            function dragStart(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragEnd(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+
+        // BAR CHART
+        function renderBarChart(data) {
+            document.getElementById("barchartCanvas").style.display = "block";
+            let ctx = document.getElementById("barchartCanvas").getContext("2d");
+            let categories = {};
+            
+            function countCategories(node) {
+                if (node.children) {
+                    node.children.forEach(countCategories);
+                } else {
+                    categories[node.name] = (categories[node.name] || 0) + 1;
+                }
+            }
+            countCategories(data);
+
+            new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: Object.keys(categories),
+                    datasets: [{ label: "OSINT Tools", data: Object.values(categories), backgroundColor: "blue" }]
+                }
+            });
+        }
+    </script>
+</body>
+</html>
